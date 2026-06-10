@@ -46,14 +46,16 @@ static DWORD getWindowStyle(const _GLFWwindow* window)
         style |= WS_POPUP;
     else
     {
-        style |= WS_SYSMENU | WS_MINIMIZEBOX;
+        style |= WS_SYSMENU      // support snapping via Win + ← / Win + →
+               | WS_MINIMIZEBOX; // support minimizing by clicking on the taskbar icon
 
         if (window->decorated)
         {
             style |= WS_CAPTION;
 
             if (window->resizable)
-                style |= WS_MAXIMIZEBOX | WS_THICKFRAME;
+                style |= WS_MAXIMIZEBOX  // support maximizing via mouse dragging to the top
+                       | WS_THICKFRAME;  // support standard resizable window
         }
         else
             style |= WS_POPUP;
@@ -334,6 +336,13 @@ static GLFWbool cursorInContentArea(_GLFWwindow* window)
     GetClientRect(window->win32.handle, &area);
     ClientToScreen(window->win32.handle, (POINT*) &area.left);
     ClientToScreen(window->win32.handle, (POINT*) &area.right);
+    if (window->customTitleBar)
+    {
+        // Ignore the padded border when using a custom title bar to allow resizing from the top
+        UINT dpi = GetDpiForWindow(window->win32.handle);
+        int padding = GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+        area.top += padding;
+    }
 
     return PtInRect(&area, pos);
 }
@@ -524,6 +533,39 @@ static void maximizeWindowManually(_GLFWwindow* window)
                  rect.right - rect.left,
                  rect.bottom - rect.top,
                  SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED);
+}
+
+static int getCustomTitleBarHeight(HWND hWnd)
+{
+    UINT dpi = GetDpiForWindow(hWnd);
+    int titleBarHeight = GetSystemMetricsForDpi(SM_CYCAPTION, dpi);
+
+    int sizingBorderThickness = GetSystemMetricsForDpi(SM_CYFRAME, dpi);
+    int topPadding = GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+    return titleBarHeight + sizingBorderThickness + topPadding;
+}
+
+static CustomTitleBarHit getCustomTitleBarHit(_GLFWwindow* window, POINT cursorPoint)
+{
+    if (!window->win32.maximized)
+    {
+        // Looks like adjustment happening in NCCALCSIZE is messing with the detection
+        // of the top hit area so manually fixing that.
+        HWND handle = window->win32.handle;
+        UINT dpi = GetDpiForWindow(handle);
+        int frame_y = GetSystemMetricsForDpi(SM_CYFRAME, dpi);
+        int padding = GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+        if (cursorPoint.y >= 0 && cursorPoint.y < frame_y + padding)
+        {
+            // TopBorder
+            return CustomTitleBarHit_Top;
+        }
+    }
+
+    // Since we are drawing our own caption, this needs to be a custom test
+    int customTitleBarHitTest = 0;
+    _glfwInputCustomTitleBarHitTest(window, cursorPoint.x, cursorPoint.y, &customTitleBarHitTest);
+    return customTitleBarHitTest;
 }
 
 // Window procedure for user-created windows
@@ -852,7 +894,19 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 
             return 0;
         }
+        case WM_NCMOUSEMOVE:
+        {
+            if (!window->customTitleBar)
+                break;
 
+            POINT cursorPoint;
+            cursorPoint.x = GET_X_LPARAM(lParam);
+            cursorPoint.y = GET_Y_LPARAM(lParam);
+            ScreenToClient(hWnd, &cursorPoint);
+
+            window->customTitleBarHit = getCustomTitleBarHit(window, cursorPoint);
+            break;
+        }
         case WM_MOUSEMOVE:
         {
             const int x = GET_X_LPARAM(lParam);
@@ -891,7 +945,44 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
             window->win32.lastCursorPosX = x;
             window->win32.lastCursorPosY = y;
 
+            if (window->customTitleBar)
+            {
+                POINT cursorPoint;
+                cursorPoint.x = x;
+                cursorPoint.y = y;
+                window->customTitleBarHit = getCustomTitleBarHit(window, cursorPoint);
+            }
+
             return 0;
+        }
+        // Handle mouse down and mouse up in the caption area to handle clicks on the buttons
+        case WM_NCLBUTTONDOWN:
+        {
+            if (!window->customTitleBar)
+                break;
+
+            // Clicks on buttons will be handled in WM_NCLBUTTONUP, but we still need
+            // to remove default handling of the click to avoid it counting as drag.
+            if (window->customTitleBarHit == CustomTitleBarHit_Maximize)
+            {
+                return 0;
+            }
+
+            break;
+        }
+        case WM_NCLBUTTONUP:
+        {
+            if (!window->customTitleBar)
+                break;
+
+            if (window->customTitleBarHit == CustomTitleBarHit_Maximize)
+            {
+                int mode = window->win32.maximized ? SW_NORMAL : SW_MAXIMIZE;
+                ShowWindow(hWnd, mode);
+                return 0;
+            }
+
+            break;
         }
 
         case WM_INPUT:
@@ -1261,6 +1352,67 @@ static LRESULT CALLBACK windowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 
             DragFinish(drop);
             return 0;
+        }
+
+        case WM_NCCALCSIZE:
+        {
+            if (!window->customTitleBar)
+                break;
+
+            UINT dpi = GetDpiForWindow(hWnd);
+
+            int frame_x = GetSystemMetricsForDpi(SM_CXFRAME, dpi);
+            int frame_y = GetSystemMetricsForDpi(SM_CYFRAME, dpi);
+            int padding = GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+
+            NCCALCSIZE_PARAMS* params = (NCCALCSIZE_PARAMS*)lParam;
+            RECT* requestedClientRect = params->rgrc;
+
+            requestedClientRect->right -= frame_x + padding;
+            requestedClientRect->left += frame_x + padding;
+            requestedClientRect->bottom -= frame_y + padding;
+
+            WINDOWPLACEMENT placement = { 0 };
+            placement.length = sizeof(WINDOWPLACEMENT);
+            const GLFWbool maximized = (GetWindowPlacement(hWnd, &placement)) ? placement.showCmd == SW_SHOWMAXIMIZED : false;
+
+            // Has to be 0 if not maximized otherwise the default titlebar is drawn as well
+            if (maximized)
+            {
+                requestedClientRect->top += frame_y + padding;
+            }
+
+            return 0;
+        }
+
+        case WM_NCHITTEST: {
+            if (!window->customTitleBar)
+                break;
+
+            // Let the default procedure handle resizing areas
+            LRESULT hit = DefWindowProc(hWnd, uMsg, wParam, lParam);
+            switch (hit) {
+            case HTNOWHERE:
+            case HTRIGHT:
+            case HTLEFT:
+            case HTTOPLEFT:
+            case HTTOP:
+            case HTTOPRIGHT:
+            case HTBOTTOMRIGHT:
+            case HTBOTTOM:
+            case HTBOTTOMLEFT:
+                return hit;
+            }
+
+            switch (window->customTitleBarHit)
+            {
+            case CustomTitleBarHit_Minimize: return HTMINBUTTON;
+            case CustomTitleBarHit_Maximize: return HTMAXBUTTON;
+            case CustomTitleBarHit_Titlebar: return HTCAPTION;
+            case CustomTitleBarHit_Top: return HTTOP;
+            }
+            // In client area
+            return HTCLIENT;
         }
     }
 
@@ -1633,6 +1785,13 @@ void _glfwGetWindowPosWin32(_GLFWwindow* window, int* xpos, int* ypos)
 
 void _glfwSetWindowPosWin32(_GLFWwindow* window, int xpos, int ypos)
 {
+    // AdjustWindowRectExForDpi adjusts based on the client area
+    // so we need to subtract the custom titlebar
+    if (window->customTitleBar)
+    {
+        ypos += getCustomTitleBarHeight(window->win32.handle);
+    }
+
     RECT rect = { xpos, ypos, xpos, ypos };
 
     if (_glfwIsWindows10Version1607OrGreaterWin32())
@@ -1674,6 +1833,13 @@ void _glfwSetWindowSizeWin32(_GLFWwindow* window, int width, int height)
     }
     else
     {
+        if (window->customTitleBar)
+        {
+            // AdjustWindowRectExForDpi adjusts based on the client area
+            // so we need to subtract the custom titlebar
+            height -= getCustomTitleBarHeight(window->win32.handle);
+        }
+
         RECT rect = { 0, 0, width, height };
 
         if (_glfwIsWindows10Version1607OrGreaterWin32())
@@ -1993,6 +2159,11 @@ void _glfwSetWindowResizableWin32(_GLFWwindow* window, GLFWbool enabled)
 }
 
 void _glfwSetWindowDecoratedWin32(_GLFWwindow* window, GLFWbool enabled)
+{
+    updateWindowStyles(window);
+}
+
+void _glfwSetWindowCustomTitlebarWin32(_GLFWwindow* window, GLFWbool enabled)
 {
     updateWindowStyles(window);
 }

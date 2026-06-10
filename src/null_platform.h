@@ -180,6 +180,7 @@ typedef struct _GLFWwindowNull
     GLFWbool        maximized;
     GLFWbool        resizable;
     GLFWbool        decorated;
+    GLFWbool        customTitlebar;
     GLFWbool        floating;
     GLFWbool        transparent;
     float           opacity;
@@ -254,6 +255,7 @@ void _glfwFocusWindowNull(_GLFWwindow* window);
 GLFWbool _glfwWindowFocusedNull(_GLFWwindow* window);
 GLFWbool _glfwWindowIconifiedNull(_GLFWwindow* window);
 GLFWbool _glfwWindowVisibleNull(_GLFWwindow* window);
+void _glfwSetWindowCustomTitlebarNull(_GLFWwindow* window, GLFWbool enabled);
 void _glfwPollEventsNull(void);
 void _glfwWaitEventsNull(void);
 void _glfwWaitEventsTimeoutNull(double timeout);

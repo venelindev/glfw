@@ -399,6 +399,11 @@ void _glfwSetWindowDecoratedNull(_GLFWwindow* window, GLFWbool enabled)
     window->null.decorated = enabled;
 }
 
+void _glfwSetWindowCustomTitlebarNull(_GLFWwindow* window, GLFWbool enabled)
+{
+    window->null.customTitlebar = enabled;
+}
+
 void _glfwSetWindowFloatingNull(_GLFWwindow* window, GLFWbool enabled)
 {
     window->null.floating = enabled;

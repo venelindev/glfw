@@ -47,6 +47,7 @@
 
 #define GLFW_INCLUDE_NONE
 #include "../include/GLFW/glfw3.h"
+#include "../include/GLFW/glfw3customtitlebar.h"
 
 #include <stdbool.h>
 
@@ -406,6 +407,7 @@ struct _GLFWwndconfig
     bool          resizable;
     bool          visible;
     bool          decorated;
+    bool          customTitleBar;
     bool          focused;
     bool          autoIconify;
     bool          floating;
@@ -535,6 +537,7 @@ struct _GLFWwindow
     // Window settings and state
     GLFWbool            resizable;
     GLFWbool            decorated;
+    GLFWbool            customTitleBar;
     GLFWbool            autoIconify;
     GLFWbool            floating;
     GLFWbool            focusOnShow;
@@ -556,6 +559,7 @@ struct _GLFWwindow
     GLFWbool            lockKeyMods;
     GLFWbool            disableMouseButtonLimit;
     int                 cursorMode;
+    CustomTitleBarHit   customTitleBarHit;
     char                mouseButtons[GLFW_MOUSE_BUTTON_LAST + 1];
     char                keys[GLFW_KEY_LAST + 1];
     // Virtual cursor position when cursor is disabled
@@ -575,6 +579,7 @@ struct _GLFWwindow
         GLFWframebuffersizefun    fbsize;
         GLFWwindowcontentscalefun scale;
         GLFWmousebuttonfun        mouseButton;
+        GLFWcustomtitlebarhittestfun    ctbhittest;
         GLFWcursorposfun          cursorPos;
         GLFWcursorenterfun        cursorEnter;
         GLFWscrollfun             scroll;
@@ -745,6 +750,7 @@ struct _GLFWplatform
     float (*getWindowOpacity)(_GLFWwindow*);
     void (*setWindowResizable)(_GLFWwindow*,GLFWbool);
     void (*setWindowDecorated)(_GLFWwindow*,GLFWbool);
+    void (*setWindowCustomTitleBar)(_GLFWwindow*, GLFWbool); 
     void (*setWindowFloating)(_GLFWwindow*,GLFWbool);
     void (*setWindowOpacity)(_GLFWwindow*,float);
     void (*setWindowMousePassthrough)(_GLFWwindow*,GLFWbool);
@@ -930,6 +936,7 @@ void _glfwInputWindowMaximize(_GLFWwindow* window, GLFWbool maximized);
 void _glfwInputWindowDamage(_GLFWwindow* window);
 void _glfwInputWindowCloseRequest(_GLFWwindow* window);
 void _glfwInputWindowMonitor(_GLFWwindow* window, _GLFWmonitor* monitor);
+void _glfwInputCustomTitleBarHitTest(_GLFWwindow* window, int posX, int posY, int* hit);
 
 void _glfwInputKey(_GLFWwindow* window,
                    int key, int scancode, int action, int mods);
